@@ -34,9 +34,9 @@ export function groupParticipantsIntoBags(
   const bags: Record<string, Bag> = {};
   const issues: Record<string, ReviewIssue> = { ...existingIssues };
 
-  // Make deep copies of incoming participants
+  // Make deep copies of incoming participants and reset assignedBagId so re-grouping runs clean
   rawParticipants.forEach(p => {
-    participants[p.id] = { ...p };
+    participants[p.id] = { ...p, assignedBagId: '' };
   });
 
   // Check for participants without Order ID (hasOrderId === false)

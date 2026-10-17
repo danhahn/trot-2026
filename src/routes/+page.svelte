@@ -4,7 +4,6 @@
   import { ALL_SHIRT_SIZES, calculateShirtInventory, getBagShirtSummary } from '$lib/inventory.js';
   import { parseDashCSV, parseFamilyCSV, parseIndividualCSV } from '$lib/parsers.js';
   import { groupParticipantsIntoBags } from '$lib/grouping.js';
-  import { loadStoredState, saveStoredState, clearStoredState } from '$lib/storage.js';
   import { exportParticipantsCSV, exportBagsCSV, exportInventoryCSV, exportFullBackupJSON, validateAndParseBackupJSON } from '$lib/export.js';
   import { formatPhone } from '$lib/normalizers.js';
   import { pushStateToCloud, listenToCloudState } from '$lib/firebase.js';
@@ -100,24 +99,58 @@
     });
   });
 
-  onMount(() => {
-    const loaded = loadStoredState();
-    if (Object.keys(loaded.participants).length > 0) {
-      state = loaded;
-    }
+  let isInitialLoading = $state(true);
 
-    // Subscribe to Firebase real-time changes
+  onMount(() => {
+    // Safety fallback: ensure initial loading spinner dismisses if network/Firebase is slow or offline
+    const timeout = setTimeout(() => {
+      isInitialLoading = false;
+    }, 4000);
+
+    // Subscribe to Firebase real-time changes as primary single source of truth
     const unsub = listenToCloudState((remoteState) => {
-      // If remote has participants and is newer or local is empty, update
-      if (remoteState && Object.keys(remoteState.participants).length > 0) {
-        state = remoteState;
-        saveStoredState(state);
+      clearTimeout(timeout);
+      isInitialLoading = false;
+      if (remoteState) {
+        // If there are participants whose assigned bag is missing from state.bags, re-run grouping so no one is unassigned
+        const pList = Object.values(remoteState.participants || {});
+        const bMap = remoteState.bags || {};
+        const hasOrphaned = pList.some(p => p.hasOrderId !== false && (!p.assignedBagId || !bMap[p.assignedBagId]));
+
+        if (hasOrphaned && pList.length > 0) {
+          const { bags, participants, issues } = groupParticipantsIntoBags(pList, {}, remoteState.issues);
+          // Preserve existing bag progress
+          for (const [bid, b] of Object.entries(bags)) {
+            if (bMap[bid]) {
+              b.packed = bMap[bid].packed;
+              b.pickedUp = bMap[bid].pickedUp;
+              b.packedAt = bMap[bid].packedAt;
+              b.pickedUpAt = bMap[bid].pickedUpAt;
+              b.customNotes = bMap[bid].customNotes;
+            }
+          }
+          state = {
+            ...remoteState,
+            bags,
+            participants,
+            issues,
+          };
+          // Persist the repaired grouping back to Firebase
+          pushStateToCloud(state).catch(() => {});
+        } else {
+          state = remoteState;
+        }
       }
     }, (connected) => {
       isCloudConnected = connected;
+      if (!connected) {
+        clearTimeout(timeout);
+        isInitialLoading = false;
+      }
     });
 
     return () => {
+      clearTimeout(timeout);
       if (unsub) unsub();
     };
   });
@@ -125,14 +158,13 @@
   async function updateAndPersist(updater: (s: AppState) => void) {
     updater(state);
     state = { ...state };
-    saveStoredState(state);
 
     // Sync changes to Firebase Cloud in real time
     isCloudSyncing = true;
     try {
       await pushStateToCloud(state);
-    } catch (e) {
-      // offline/fallback
+    } catch (e: any) {
+      notify(`Sync error: ${e.message}`, 'error');
     } finally {
       isCloudSyncing = false;
     }
@@ -436,8 +468,8 @@
       const text = await file.text();
       const restored = validateAndParseBackupJSON(text);
       state = restored;
-      saveStoredState(state);
-      notify('State successfully restored from JSON backup!');
+      await pushStateToCloud(state);
+      notify('State successfully restored and synced to Firebase!');
     } catch (err: any) {
       notify(`Restore failed: ${err.message}`, 'error');
     } finally {
@@ -535,9 +567,45 @@
 
   <!-- MAIN TAB CONTENT (Hidden on print) -->
   <main class="tab-content no-print">
-    <!-- DASHBOARD TAB -->
-    {#if activeTab === 'dashboard'}
-      <div class="dashboard-grid">
+    {#if isInitialLoading}
+      <div class="content-panel" style="text-align: center; padding: 48px 24px;">
+        <div style="font-size: 32px; margin-bottom: 12px;">⏳</div>
+        <h3 style="margin-bottom: 8px;">Connecting to Firebase Cloud...</h3>
+        <p style="color: #64748b;">Loading real-time registrations and bag distribution from trot-2026.</p>
+      </div>
+    {:else}
+      {#if participantsList.length === 0}
+        <div class="content-panel empty-cloud-banner">
+          <div class="empty-cloud-icon">📂</div>
+          <div class="empty-cloud-info">
+            <h2 style="margin: 0 0 6px 0; font-size: 20px; color: #0f172a;">No Registration Data in Firebase</h2>
+            <p style="margin: 0 0 16px 0; color: #475569; font-size: 14px;">
+              Cloud Firestore is empty. Upload your race registration CSV files below to group participants into family bags, generate packing slips, and sync across volunteers.
+            </p>
+            <div class="empty-cloud-actions">
+              <label class="btn primary file-btn">
+                📤 Upload Dash CSV
+                <input type="file" accept=".csv" onchange={(e) => handleCsvUpload(e, 'Dash')} hidden />
+              </label>
+              <label class="btn primary file-btn">
+                📤 Upload Family CSV
+                <input type="file" accept=".csv" onchange={(e) => handleCsvUpload(e, 'Family')} hidden />
+              </label>
+              <label class="btn primary file-btn">
+                📤 Upload Individual CSV
+                <input type="file" accept=".csv" onchange={(e) => handleCsvUpload(e, 'Individual')} hidden />
+              </label>
+              <button class="btn secondary" onclick={() => activeTab = 'import-export'}>
+                View Import & Backup Center &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      <!-- DASHBOARD TAB -->
+      {#if activeTab === 'dashboard'}
+        <div class="dashboard-grid">
         <!-- Metric Cards -->
         <div class="stats-overview">
           <div class="stat-card">
@@ -1097,24 +1165,22 @@
 
         <div class="danger-zone">
           <h4>Reset State</h4>
-          <p>Clears browser localStorage for this app. (Raw CSV files on disk are never touched).</p>
-          <button class="btn danger" onclick={() => {
-            if (confirm('Are you sure you want to clear all loaded participants and bags from browser storage?')) {
-              clearStoredState();
-              state = {
-                version: 1,
-                lastUpdated: new Date().toISOString(),
-                participants: {},
-                bags: {},
-                issues: {},
-                importedFiles: { dash: false, family: false, individual: false },
-              };
-              notify('Browser storage cleared.');
+          <p>Clears the participant and bag state in Firebase cloud for all volunteers.</p>
+          <button class="btn danger" onclick={async () => {
+            if (confirm('Are you sure you want to clear all loaded participants and bags from Firebase? This will clear it for all users.')) {
+              await updateAndPersist(s => {
+                s.participants = {};
+                s.bags = {};
+                s.issues = {};
+                s.importedFiles = { dash: false, family: false, individual: false };
+              });
+              notify('Firebase cloud state cleared.');
             }
-          }}>Reset Browser Storage</button>
+          }}>Reset Cloud State</button>
         </div>
       </div>
     {/if}
+  {/if}
   </main>
 
   <!-- PRINT MODAL / VIEW (Visible during print window) -->
@@ -2161,6 +2227,33 @@
     padding: 0;
     font-size: 13px;
     text-align: left;
+  }
+
+  .empty-cloud-banner {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    padding: 24px;
+    background: #f8fafc;
+    border: 2px dashed #94a3b8;
+    border-radius: 12px;
+    margin-bottom: 24px;
+  }
+
+  .empty-cloud-icon {
+    font-size: 40px;
+    line-height: 1;
+  }
+
+  .empty-cloud-info {
+    flex: 1;
+  }
+
+  .empty-cloud-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
   }
 
   /* Print Styles */

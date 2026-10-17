@@ -67,17 +67,34 @@ export function listenToCloudState(
 
   const docRef = doc(database, 'turkey_trot', DOC_ID);
   unsubscribe = onSnapshot(docRef, (snapshot) => {
+    if (onStatusChange) onStatusChange(true);
     if (snapshot.exists()) {
       const data = snapshot.data() as AppState;
       if (data && data.participants && data.bags) {
-        if (onStatusChange) onStatusChange(true);
         onStateChange(data);
+      } else {
+        onStateChange({
+          version: 1,
+          lastUpdated: new Date().toISOString(),
+          participants: {},
+          bags: {},
+          issues: {},
+          importedFiles: { dash: false, family: false, individual: false },
+        });
       }
     } else {
-      if (onStatusChange) onStatusChange(true);
+      // Document doesn't exist yet in Firestore
+      onStateChange({
+        version: 1,
+        lastUpdated: new Date().toISOString(),
+        participants: {},
+        bags: {},
+        issues: {},
+        importedFiles: { dash: false, family: false, individual: false },
+      });
     }
   }, (err) => {
-    console.warn('Cloud listener notice:', err);
+    console.error('Cloud listener error:', err);
     if (onStatusChange) onStatusChange(false);
   });
 
