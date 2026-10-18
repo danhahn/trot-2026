@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Bag, Participant, ShirtSize } from '$lib/types.js';
+  import type { Bag, Participant } from '$lib/types.js';
+  import { formatSignupDate, getBagSignupTimestamp, getBagShirtPriority, getParticipantShirtPriority } from '$lib/signup-priority.js';
 
   interface Props {
     bag: Bag;
@@ -24,6 +25,12 @@
   let anyUnsignedWaiver: boolean = $derived(
     bagParticipants.some(p => !p.waiverSigned)
   );
+  let earliestSignupDate = $derived.by(() => {
+    const timestamp = getBagSignupTimestamp(bag, participants);
+    return timestamp === null ? 'Unknown' : formatSignupDate(new Date(timestamp).toISOString());
+  });
+  let bagPriority = $derived(getBagShirtPriority(bag, participants));
+  let priorityLabel = $derived(bagPriority === 'guaranteed' ? 'GUARANTEED SHIRTS' : bagPriority === 'extra' ? 'EXTRA SHIRTS ONLY' : bagPriority === 'mixed' ? 'MIXED SIGNUP DATES — REVIEW' : 'SIGNUP DATE UNKNOWN — REVIEW');
 </script>
 
 <div class="packing-sheet">
@@ -59,11 +66,17 @@
         <span class="val">{bag.primaryPhone || 'N/A'}</span>
       </div>
       <div class="meta-item">
+        <span class="label">Earliest Signup:</span>
+        <span class="val">{earliestSignupDate}</span>
+      </div>
+      <div class="meta-item">
         <span class="label">Total Shirts:</span>
         <span class="val badge-count">{bagParticipants.length}</span>
       </div>
     </div>
   </div>
+
+  <div class="signup-priority {bagPriority}">{priorityLabel} <span>Guaranteed through Oct 6, 2026</span></div>
 
   {#if anyUnsignedWaiver}
     <div class="waiver-alert">
@@ -78,7 +91,7 @@
           <th style="width: 45px;">Packed</th>
           <th>Participant Name</th>
           <th>Event</th>
-          <th>Details</th>
+          <th>Details / Signup Priority</th>
           <th style="width: 110px;">Shirt Size</th>
           <th style="width: 70px;">Waiver</th>
         </tr>
@@ -96,6 +109,8 @@
               <span class="event-tag {p.source.toLowerCase()}">{p.source}</span>
             </td>
             <td class="details-col">
+              <span class="signup-date">Signed up: {formatSignupDate(p.submissionDate)}</span>
+              <span class="participant-priority {getParticipantShirtPriority(p)}">{getParticipantShirtPriority(p) === 'guaranteed' ? 'Guaranteed' : getParticipantShirtPriority(p) === 'extra' ? 'Extra shirts, if available' : 'Date needs review'}</span>
               {#if p.grade || p.teacher}
                 <span class="school-info">Grade: {p.grade || '-'} | Teacher: {p.teacher || '-'}</span>
               {:else if p.age}
@@ -348,6 +363,13 @@
     background: #dcfce7;
     color: #166534;
   }
+
+  .signup-priority { margin: 10px 0; padding: 8px 10px; border: 1px solid #9ca3af; border-radius: 5px; font-weight: 800; font-size: 12px; }
+  .signup-priority span { float: right; font-weight: 500; }
+  .signup-priority.guaranteed, .participant-priority.guaranteed { color: #166534; }
+  .signup-priority.extra, .participant-priority.extra { color: #9a3412; }
+  .signup-priority.mixed, .signup-priority.unknown, .participant-priority.unknown { color: #991b1b; }
+  .signup-date, .participant-priority { display: block; font-size: 10px; margin-bottom: 2px; }
 
   .school-info {
     font-size: 12px;

@@ -6,6 +6,7 @@
   import { groupParticipantsIntoBags } from '$lib/grouping.js';
   import { exportParticipantsCSV, exportBagsCSV, exportInventoryCSV, exportFullBackupJSON, validateAndParseBackupJSON } from '$lib/export.js';
   import { formatPhone } from '$lib/normalizers.js';
+  import { sortBagsBySignupDate } from '$lib/signup-priority.js';
   import { pushStateToCloud, listenToCloudState } from '$lib/firebase.js';
   import PackingSheet from '$lib/components/PackingSheet.svelte';
 
@@ -52,7 +53,8 @@
 
   // Derive counts & stats
   let inventory: ReturnType<typeof calculateShirtInventory> = $derived(calculateShirtInventory(state.participants, state.bags));
-  let bagsList: Bag[] = $derived(Object.values(state.bags).sort((a, b) => a.bagNumber - b.bagNumber));
+  // Keep assigned bag numbers unchanged; only sort the display/print order by earliest signup.
+  let bagsList: Bag[] = $derived(sortBagsBySignupDate(Object.values(state.bags), state.participants));
   let participantsList: Participant[] = $derived(Object.values(state.participants));
   let issuesList: ReviewIssue[] = $derived(Object.values(state.issues));
   let unresolvedIssues: ReviewIssue[] = $derived(issuesList.filter(i => !i.resolved));
