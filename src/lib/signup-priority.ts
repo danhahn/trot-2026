@@ -60,3 +60,12 @@ export function formatSignupDate(value: string | undefined | null): string {
   const timestamp = parseSubmissionTimestamp(value);
   return timestamp === null ? 'Unknown' : new Date(timestamp).toLocaleDateString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'short', day: 'numeric' });
 }
+
+/** Renumber bags to match chronological signup order while preserving stable bag IDs. */
+export function renumberBagsBySignupDate(bags: Record<string, Bag>, participants: Record<string, Participant>): void {
+  const ordered = sortBagsBySignupDate(Object.values(bags), participants);
+  ordered.forEach((bag, index) => {
+    // Keep bag.id unchanged; only update the human-facing number.
+    bags[bag.id].bagNumber = index + 1;
+  });
+}

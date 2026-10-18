@@ -6,7 +6,7 @@
   import { groupParticipantsIntoBags } from '$lib/grouping.js';
   import { exportParticipantsCSV, exportBagsCSV, exportInventoryCSV, exportFullBackupJSON, validateAndParseBackupJSON } from '$lib/export.js';
   import { formatPhone } from '$lib/normalizers.js';
-  import { sortBagsBySignupDate } from '$lib/signup-priority.js';
+  import { sortBagsBySignupDate, renumberBagsBySignupDate } from '$lib/signup-priority.js';
   import { pushStateToCloud, listenToCloudState } from '$lib/firebase.js';
   import PackingSheet from '$lib/components/PackingSheet.svelte';
 
@@ -140,7 +140,12 @@
           // Persist the repaired grouping back to Firebase
           pushStateToCloud(state).catch(() => {});
         } else {
+          // Renumber bags so any stale bag numbers persisted in Firebase are corrected
+          // on this load. This is a no-op if numbers are already correct.
+          renumberBagsBySignupDate(remoteState.bags, remoteState.participants);
           state = remoteState;
+          // Write corrected numbers back so Firebase stays in sync
+          pushStateToCloud(state).catch(() => {});
         }
       }
     }, (connected) => {
