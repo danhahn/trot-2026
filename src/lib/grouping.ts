@@ -1,4 +1,5 @@
 import type { Participant, Bag, ReviewIssue } from './types.js';
+import { renumberBagsBySignupDate } from './signup-priority.js';
 
 export interface GroupingResult {
   bags: Record<string, Bag>;
@@ -292,6 +293,10 @@ export function groupParticipantsIntoBags(
       }
     }
   }
+
+  // Step 6: Renumber bags so bag numbers reflect chronological signup order (earliest first),
+  // with missing/unknown dates sorted last and original bag number as a deterministic tie-breaker.
+  renumberBagsBySignupDate(bags, participants);
 
   return { bags, participants, issues };
 }
