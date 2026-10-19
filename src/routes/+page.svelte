@@ -109,9 +109,13 @@
       isInitialLoading = false;
     }, 4000);
 
+    let initialLoadDone = false;
+
     // Subscribe to Firebase real-time changes as primary single source of truth
     const unsub = listenToCloudState((remoteState) => {
       clearTimeout(timeout);
+      const wasInitialLoad = !initialLoadDone;
+      initialLoadDone = true;
       isInitialLoading = false;
       if (remoteState) {
         // If there are participants whose assigned bag is missing from state.bags, re-run grouping so no one is unassigned
@@ -137,15 +141,24 @@
             participants,
             issues,
           };
-          // Persist the repaired grouping back to Firebase
-          pushStateToCloud(state).catch(() => {});
+          // Only push repaired grouping back to Firebase on initial load to avoid feedback loops
+          if (wasInitialLoad) {
+            pushStateToCloud(state).catch(() => {});
+          }
         } else {
-          // Renumber bags so any stale bag numbers persisted in Firebase are corrected
-          // on this load. This is a no-op if numbers are already correct.
-          renumberBagsBySignupDate(remoteState.bags, remoteState.participants);
-          state = remoteState;
-          // Write corrected numbers back so Firebase stays in sync
-          pushStateToCloud(state).catch(() => {});
+          // Only fix bag numbers and write back on the initial load.
+          // Subsequent snapshots are already correct (they came from our own writes).
+          if (wasInitialLoad) {
+            // Renumber bags so any stale bag numbers persisted in Firebase are corrected
+            // on this load. This is a no-op if numbers are already correct.
+            renumberBagsBySignupDate(remoteState.bags, remoteState.participants);
+            state = remoteState;
+            // Write corrected numbers back so Firebase stays in sync
+            pushStateToCloud(state).catch(() => {});
+          } else {
+            // Live update from another volunteer — just accept it as-is
+            state = remoteState;
+          }
         }
       }
     }, (connected) => {
